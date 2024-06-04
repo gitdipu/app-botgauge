@@ -1,0 +1,45 @@
+name: Deploy to EKS
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: prod  # Optional: Define environment for deployment secrets
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Login to AWS
+        uses: aws-actions/aws-login@v2
+        with:
+          aws-creds: ${{ secrets.AWS_CREDENTIALS }}  # Replace with secrets manager or other credential provider
+
+      - name: Configure AWS CLI
+        run: aws configure set aws_region ${{ secrets.AWS_REGION }}
+
+      - name: Get EKS Cluster Name (Optional)
+        id: get_cluster_name
+        run: |
+          aws eks describe-cluster --name ${{ secrets.EKS_CLUSTER_NAME }} | jq -r '.cluster.name' || true
+        shell: bash
+
+      - name: Set Cluster Name (if not retrieved)
+        run: echo "CLUSTER_NAME=${{ steps.get_cluster_name.outputs.cluster_name }}" >> $GITHUB_ENV
+
+      - name: Build Docker Image (reference previous workflow)
+        uses: ./build-and-push-docker-image.yml@v1  # Replace with actual workflow file path
+
+      - name: Update Kubeconfig
+        uses: aws-actions/amazon-eks-update-kubeconfig@v2
+        with:
+          cluster-name: ${{ env.CLUSTER_NAME }}
+          region: ${{ secrets.AWS_REGION }}
+
+      - name: Deploy to EKS with Helm
+        run: |
+          helm upgrade --install my-go-app \
+            --set image.repository=${{ secrets.DOCKER_USERNAME }} \
+            --set image.tag=latest \
+            charts/my-go-app
